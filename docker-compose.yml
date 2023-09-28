@@ -1,0 +1,230 @@
+version: "3.7"
+services:
+  api:
+    build: './src/api'
+    image: harshraj22/dis_sim_api
+    environment:
+      - REDIS_URL=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8001:8001"
+    depends_on:
+      - redis
+      - similarity
+      - broker
+
+  similarity:
+    build: './src/similarity'
+    image: harshraj22/dis_sim_similarity
+    user: nobody
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  flower:
+    # https://distributedpython.com/posts/monitoring-a-dockerized-celery-cluster-with-flower/
+    image: mher/flower
+    container_name: flower
+    command: celery flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_PORT=8888
+    ports:
+      - 8888:8888
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: './src/frontend'
+    image: harshraj22/dis_sim_frontend
+    depends_on:
+      - api
+    ports:
+      - '8501:8501'
+    volumes:
+      - ./src/db:/app/db
+      - ./src/frontend:/app
+
+  auth:
+    build: './src/auth'
+    image: harshraj22/dis_sim_auth
+    ports:
+      - '8019:8019'
+    depends_on:
+      data_population:
+         condition: service_healthy
+
+  result_feedback:
+    build: './src/result_feedback'
+    image: harshraj22/dis_sim_result_feedback
+    ports:
+      - '8002:8002'
+    depends_on:
+      - similarity
+        #  condition: service_healthy
+
+  redis:
+    image: 'redis:4-alpine'
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli","ping"]
+    
+  # redis_slave:
+  #   image: 'redis:4-alpine'
+  #   ports:
+  #     - '6380:6379'
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli","ping"]
+
+  # https://github.com/soumilshah1995/getting-started-with-kafka-and-elasticsearch/tree/main/Lab2 
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper
+    ports:
+      - '2181:2181'
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck: # https://gabrielschenker.com/index.php/2019/10/01/docker-compose-health-checks/
+      test: nc -z localhost 2181 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  broker:
+    image: confluentinc/cp-kafka:7.0.1
+    container_name: broker
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: kafka-topics --bootstrap-server broker:9092 --list
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # https://github.com/confluentinc/cp-docker-images/issues/248
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
+  monitor:
+    build: './src/monitor'
+    image: harshraj22/dis_sim_monitor
+    depends_on:
+      - broker
+    volumes:
+      - ./src/db:/app/db
+        # condition: service_completed_successfully
+
+  subscription_db:
+    container_name: subscription_db
+    image: mysql
+    # NOTE: use of "mysql_native_password" is not recommended: https://dev.mysql.com/doc/refman/8.0/en/upgrading-from-previous-series.html#upgrade-caching-sha2-password
+    # (this is just an example, not intended to be a production configuration)
+    ports:
+      - 3306:3306
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: mypassword
+      MYSQL_DATABASE: DB
+      # MYSQL_USER: root
+    volumes:
+      - ./src/subscription_db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test:  "mysql $$MYSQL_DATABASE -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1;'" # https://github.com/docker/compose/issues/10155#event-8192088464
+      interval: 1s
+      timeout: 20s
+      retries: 10
+      start_period: 10s
+
+  feedback_db:
+    container_name: feedback_db
+    image: mysql
+    # NOTE: use of "mysql_native_password" is not recommended: https://dev.mysql.com/doc/refman/8.0/en/upgrading-from-previous-series.html#upgrade-caching-sha2-password
+    # (this is just an example, not intended to be a production configuration)
+    ports:
+      - 3307:3306
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: mypassword
+      MYSQL_DATABASE: DB
+      # MYSQL_USER: root
+    volumes:
+      - ./src/feedback_db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test:  "mysql $$MYSQL_DATABASE -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1;'" # https://github.com/docker/compose/issues/10155#event-8192088464
+      interval: 1s
+      timeout: 20s
+      retries: 10
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    container_name: prometheus
+    ports:
+      - 9090:9090
+    volumes:
+      - ./src/metrics_monitor/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    user: "472"
+    container_name: grafana
+    depends_on:
+      - prometheus
+    ports:
+      - 3000:3000
+    volumes:
+      - ./src/metrics_monitor/datasource.yml:/etc/grafana/provisioning/datasource.yml
+    env_file:
+      - ./src/metrics_monitor/config.monitoring
+    
+
+  data_population:
+    build: './src/data_population'
+    image: harshraj22/dis_sim_data_population
+    environment:
+      - REDIS_URL=redis
+      - REDIS_PORT=6379
+    ports:
+      - "8020:8020"
+    healthcheck:
+      test: ["CMD", "python3", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      redis:
+        condition: service_healthy
+      subscription_db:
+        condition: service_healthy
+
+  services_ready:
+    build: './src/services_ready'
+    image: harshraj22/dis_sim_services_ready
+    depends_on:
+      redis:
+        condition: service_healthy
+      subscription_db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      zookeeper:
+        condition: service_healthy
+      
