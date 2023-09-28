@@ -7,4 +7,4 @@
 
 
 ### Benchmarks:
-- Load Testing: [here](./performance_tests/load_test)
+- Load Testing: [here](https://github.com/DoddiC/SimuServe/tree/main/performance%20tests/load_test)
