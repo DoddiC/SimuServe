@@ -1,4 +1,4 @@
 # SimuServe
 
 ### Benchmarks:
-- Load Testing: [here](./performance tests/load_test)
+- Load Testing: [here](./performance_tests/load_test)
