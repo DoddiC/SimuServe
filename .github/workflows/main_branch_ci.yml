@@ -10,22 +10,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Build dis-sim-api
+      - name: Build simuserve-api
         run:
           docker build -f ./src/api/Dockerfile ./src/api
-      - name: Build dis-sim-auth
+      - name: Build simuserve-auth
         run:
           docker build -f ./src/auth/Dockerfile ./src/auth
-      - name: Build dis-sim-frontend
+      - name: Build simuserve-frontend
         run:
           docker build -f ./src/frontend/Dockerfile ./src/frontend
-      - name: Build dis-sim-monitor
+      - name: Build simuserve-monitor
         run:
           docker build -f ./src/monitor/Dockerfile ./src/monitor
-      - name: Build dis-sim-similarity
+      - name: Build simuserve-similarity
         run:
           docker build -f ./src/similarity/Dockerfile ./src/similarity
-      - name: Build dis-sim-data-population
+      - name: Build simuserve-data-population
         run:
           docker build -f ./src/data_population/Dockerfile ./src/data_population
       - name: Build services-ready
